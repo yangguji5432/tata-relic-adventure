@@ -426,7 +426,7 @@ class Runner:
                 now=time.monotonic()
                 if now-unknown_since>=60: raise RuntimeError('连续 1 分钟仍无法识别画面，已暂停，不再尝试继续。')
                 if now>=unknown_next_space:
-                    protected=True;saw_expedition=True
+                    saw_expedition=True
                     if not send_key(hwnd,'space',self.stop): return
                     finished=time.monotonic()
                     interval=1 if finished-unknown_since<20 else 5
@@ -445,8 +445,7 @@ class Runner:
             if kind in ('forward','treasure','enemy','buff','result'): saw_expedition=True
             if not entered and kind in ('forward','treasure','enemy','buff','result'):
                 entered=True
-                protected=not (kind=='forward' and read_floor(lines)==1)
-                self.q.put(('log','已接续本局，按保护纪录阈值处理。' if protected else '已确认第1层，可以从这里开始前进。'))
+                self.q.put(('log','已接续本局；仅在确认图鉴刷新纪录后开启保护模式。'))
             if kind=='home' and read_multiplier(lines)!=1:
                 raise RuntimeError('仅支持已识别的 1 倍场；请设置 1 倍并确认画面可识别。')
             if kind=='home':
@@ -464,21 +463,21 @@ class Runner:
                     name,value=identify(fresh_lines,catalog)
                     if name and value is not None:
                         old=catalog.get(name)
-                        protected=protected or old is None or value>old
                         pending[name]=max(value,pending.get(name,0))
-                        self.q.put(('log',f'宝藏：{name} {value}；图鉴 {old if old is not None else "未知"}；保护模式={protected}。'))
                         if previous_treasure_read==(name,value):
                             updated=promoted_catalog(catalog,name,value)
                             if updated is not None:
                                 atomic_save(CATALOG,updated)
                                 catalog.clear();catalog.update(updated)
+                                protected=True
                                 self.q.put(('catalog_update',updated))
                                 self.q.put(('log',f'图鉴已自动保存：{name}，{old if old is not None else 0} → {value}。'))
+                                self.q.put(('log','已确认图鉴刷新纪录，本局开启保护模式。'))
                         else:
                             self.q.put(('log','两次宝藏读数不一致，本次不覆盖图鉴，请之后核对。'))
+                        self.q.put(('log',f'宝藏：{name} {value}；原图鉴 {old if old is not None else "未知"}；保护模式={protected}。'))
                     else:
-                        protected=True
-                        self.q.put(('log','已确认宝藏展示，但名称或价值未读清；本局按保护阈值处理，图鉴请之后核对。'))
+                        self.q.put(('log',f'宝藏名称或价值未读清，不触发保护、不刷新图鉴；当前保护模式={protected}。'))
                 elif kind=='result': recorded=True
                 else: self.q.put(('log','已确认获得增益。'))
                 if not send_key(hwnd,'space',self.stop): return
