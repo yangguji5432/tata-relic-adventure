@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from PIL import Image
 
 DEFAULT_POINTS={
@@ -34,6 +35,101 @@ def parse_foreground(text):
         match=re.search(pattern,text)
         if match:return match.group(1)
     return None
+
+
+@dataclass(frozen=True)
+class DisplayTarget:
+    package: str
+    logical_id: int
+    physical_id: str
+
+
+def parse_display_activities(text):
+    """Only display-local resumed records, never the global dump trailer.
+
+    Task fields must be nested below the root task. The display's explicit
+    `Resumed:` summary is also accepted. A flat/global resumed record cannot
+    establish which display owns an activity.
+    """
+    displays={};current=None;header_indent=0;task_indent=None;closed=False
+    for line in text.splitlines():
+        indent=len(line)-len(line.lstrip())
+        header=re.match(r'^\s*Display\s+#(\d+)\b',line)
+        if header:
+            current=int(header.group(1));displays.setdefault(current,set())
+            header_indent=indent;task_indent=None;closed=False
+            continue
+        if current is None or closed or not line.strip():continue
+        body=line.strip()
+        if indent<=header_indent:
+            closed=True;continue
+        # RootWindowContainer.dumpActivities switches to global state here.
+        if re.match(r'(?:mFocusedRootTask|mLastFocusedRootTask|mTopResumedActivity|'
+                    r'mTopFocusedDisplayId|mResumedActivities|mRootWindowContainer|'
+                    r'mLastPausedActivity|mSleepTokens|mHomeProcess|mPending|'
+                    r'mTaskSupervisor|mSupervisor|ACTIVITY MANAGER)\b',body):
+            closed=True;continue
+        if re.match(r'(?:\*\s*)?(?:RootTask\b|Task[ #{]|Stack[ #])',body):
+            task_indent=indent if task_indent is None else min(task_indent,indent)
+        summary=bool(re.match(r'Resumed\s*:',body))
+        local_field=bool(re.match(r'(?:mResumedActivity|topResumedActivity)\s*[:=]',body))
+        if local_field and indent<=(task_indent if task_indent is not None else header_indent+2):
+            # This is a global record, even if it repeats the last display's game.
+            closed=True;continue
+        if summary or local_field:
+            match=re.search(r'\bu\d+\s+([A-Za-z0-9_.]+)/',body)
+            if match:displays[current].add(match.group(1))
+    return displays
+
+
+def parse_display_viewports(text):
+    """Map logical display IDs to physical IDs from active local viewports."""
+    mapping={}
+    for block in re.findall(r'DisplayViewport\{([^{}]*)\}',text,re.S):
+        if not re.search(r'\bisActive\s*=\s*true\b',block,re.I):continue
+        if re.search(r'\bvalid\s*=\s*false\b',block,re.I):continue
+        logical=re.search(r'\bdisplayId\s*=\s*(\d+)\b',block)
+        physical=re.search(r"\buniqueId\s*=\s*['\"]?local:(\d+)\b",block)
+        if logical and physical:
+            mapping.setdefault(int(logical.group(1)),set()).add(physical.group(1))
+    return mapping
+
+
+def select_display(activities,preferred=None):
+    if preferred:
+        matches=[(display,preferred) for display,packages in activities.items() if preferred in packages]
+    else:
+        matches=[(display,package) for display,packages in activities.items() for package in packages
+                 if not (package=='android' or package.startswith('com.android.')
+                         or 'launcher' in package.lower() or package=='app.lawnchair')]
+    if len(matches)>1:raise AdbError('目标画面不唯一：多个前台候选或同一游戏出现在多个画面，已暂停。请关闭多余画面后重试。')
+    if not matches:raise AdbError('无法确定游戏所在画面，请让游戏在安卓画面中保持前台，再重新绑定。')
+    display,package=matches[0]
+    if activities[display]!={package}:
+        raise AdbError('游戏画面的前台应用不唯一，已暂停。')
+    return display,package
+
+
+def decode_screenshot(data):
+    signature=b'\x89PNG\r\n\x1a\n'
+    offset=data.find(signature,0,4096+len(signature))
+    if len(data)>32*1024*1024 or offset<0:
+        preview=data[:180].decode('utf-8',errors='replace')
+        raise AdbError(f'ADB 截图格式异常：收到{len(data)}字节，未找到有效PNG文件头；返回内容：{preview!r}')
+    if offset:
+        try:prefix=data[:offset].decode('utf-8')
+        except UnicodeDecodeError:raise AdbError('PNG之前含非文本数据，已拒绝截图。') from None
+        if any(not char.isprintable() and char not in '\r\n\t' for char in prefix):
+            raise AdbError('PNG之前含异常控制字符，已拒绝截图。')
+    payload=data[offset:]
+    try:
+        with Image.open(io.BytesIO(payload)) as im:
+            if im.format!='PNG':raise ValueError('not PNG')
+            im.verify()
+        with Image.open(io.BytesIO(payload)) as im:
+            im.load();return im.convert('RGB')
+    except (OSError,ValueError,SyntaxError) as error:
+        raise AdbError(f'无法解码ADB的PNG截图（{len(payload)}字节）：{error}') from error
 
 class AdbClient:
     def __init__(self,path,serial=''):
@@ -72,41 +168,42 @@ class AdbClient:
         if not 1<=port<=65535:raise AdbError('端口应在 1–65535 之间。')
         return self.run(['connect',address],device=False).decode('utf-8',errors='replace')
 
-    def foreground(self,stop=None):
+    def resolve_target(self,preferred=None,stop=None):
         text=self.run(['shell','dumpsys','activity','activities'],stop=stop).decode('utf-8',errors='replace')
-        package=parse_foreground(text)
-        if not package:
-            text=self.run(['shell','dumpsys','window','windows'],stop=stop).decode('utf-8',errors='replace')
-            package=parse_foreground(text)
-        if not package:raise AdbError('无法确认安卓内部前台应用，已停止操作。')
-        return package
+        logical,package=select_display(parse_display_activities(text),preferred)
+        display_text=self.run(['shell','dumpsys','display'],stop=stop).decode('utf-8',errors='replace')
+        physical=parse_display_viewports(display_text).get(logical,set())
+        if len(physical)!=1:raise AdbError(f'逻辑画面{logical}没有唯一的活动物理显示器映射，已暂停；不会回退到桌面截图。')
+        return DisplayTarget(package,logical,next(iter(physical)))
 
-    def screenshot(self,stop=None):
-        data=self.run(['exec-out','screencap','-p'],timeout=15,stop=stop)
-        if not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data)>32*1024*1024:
-            raise AdbError('ADB 截图格式异常，未进行操作。')
-        try:
-            with Image.open(io.BytesIO(data)) as im:
-                im.load();return im.convert('RGB')
-        except (OSError,ValueError) as error:raise AdbError('无法解码 ADB 截图。') from error
+    def screenshot(self,stop=None,physical_id=None):
+        if physical_id is None or not re.fullmatch(r'\d+',str(physical_id)):
+            raise AdbError('未确定截图物理显示器，已停止。请重新绑定游戏。')
+        data=self.run(['exec-out','screencap','-p','-d',str(physical_id)],timeout=15,stop=stop)
+        return decode_screenshot(data)
 
 class Session:
     def __init__(self,client,profile,stop):
         self.client=client;self.profile=profile;self.stop=stop
-        self.last_check=0;self.raw_size=None
+        self.last_check=0;self.raw_size=None;self.target=None
         self.package=profile.get('package','')
         if not self.package:raise AdbError('请先绑定当前游戏。')
 
     def guard(self,force=False):
         if self.stop.is_set():raise AdbError('任务已停止。')
         if force or time.monotonic()-self.last_check>=2:
-            current=self.client.foreground(self.stop)
-            if current!=self.package:raise AdbError('安卓内部已切换应用，已暂停；请回到绑定的游戏后重新启动。')
+            current=self.client.resolve_target(preferred=self.package,stop=self.stop)
+            if current.package!=self.package:
+                raise AdbError('目标画面已切换到其他安卓应用，已暂停。')
+            if self.target is not None and self.target!=current:
+                raise AdbError('运行中游戏显示画面或物理映射发生变化，已暂停；请重新绑定并核对校准。')
+            self.target=current
             self.last_check=time.monotonic()
 
     def raw_capture(self):
-        self.guard()
-        image=self.client.screenshot(self.stop)
+        self.guard(force=True)
+        image=self.client.screenshot(self.stop,physical_id=self.target.physical_id)
+        self.guard(force=True)
         saved=self.profile.get('screen_size')
         if saved and list(image.size)!=saved:raise AdbError('安卓截图尺寸变化，请重新连接并校准游戏区域。')
         self.raw_size=image.size
@@ -134,11 +231,11 @@ class Session:
     def tap(self,name):
         self.guard(force=True)
         x,y=self.point(name)
-        self.client.run(['shell','input','tap',str(x),str(y)],stop=self.stop)
+        self.client.run(['shell','input','-d',str(self.target.logical_id),'tap',str(x),str(y)],stop=self.stop)
 
     def swipe_catalog(self,down=True):
         self.guard(force=True)
         l,t,r,b=self.box();x=round(l+(r-l)*.8)
         ys=[.78,.22] if down else [.22,.78]
         y0,y1=[round(t+(b-t)*v) for v in ys]
-        self.client.run(['shell','input','swipe',str(x),str(y0),str(x),str(y1),'400'],stop=self.stop)
+        self.client.run(['shell','input','-d',str(self.target.logical_id),'swipe',str(x),str(y0),str(x),str(y1),'400'],stop=self.stop)

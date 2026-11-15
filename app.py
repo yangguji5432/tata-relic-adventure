@@ -76,7 +76,7 @@ class App(engine.Runner):
         engine.atomic_save(engine.CONFIG,self.settings)
     def update_binding(self):
         p=self.profiles.get(self.serial.get(),{})
-        self.binding.set('绑定游戏：'+p['package']+'；安卓尺寸：'+str(p.get('screen_size')) if p.get('package') else '当前设备尚未绑定游戏。')
+        self.binding.set('绑定游戏：'+p['package']+'；安卓尺寸：'+str(p.get('screen_size'))+'；最近逻辑画面：'+str(p.get('last_logical_display','待重新绑定'))+'（运行时动态检查）' if p.get('package') else '当前设备尚未绑定游戏。')
     def browse_adb(self):
         if not self.idle():return
         path=filedialog.askopenfilename(title='选择已安装的 adb.exe',filetypes=[('ADB','adb.exe'),('EXE','*.exe')])
@@ -112,13 +112,18 @@ class App(engine.Runner):
         except Exception as e:messagebox.showerror('连接失败',str(e));return
         old=copy.deepcopy(self.profiles.get(client.serial,{}))
         def work():
-            package=client.foreground(self.stop)
+            target=client.resolve_target(preferred=old.get('package'),stop=self.stop)
+            package=target.package
             if package.startswith('com.android.') or package in ('app.lawnchair','android'):
                 raise AdbError('当前是安卓桌面或系统界面，请先在模拟器内打开游戏。')
-            image=client.screenshot(self.stop)
+            image=client.screenshot(self.stop,physical_id=target.physical_id)
+            if client.resolve_target(preferred=package,stop=self.stop)!=target:
+                raise AdbError('绑定过程中游戏画面发生变化，请重试。')
             profile=old if old.get('package')==package and old.get('screen_size')==list(image.size) else {}
-            profile.update({'package':package,'screen_size':list(image.size)})
+            profile.update({'package':package,'screen_size':list(image.size),
+                            'last_logical_display':target.logical_id,'last_physical_display':target.physical_id})
             profile.setdefault('region',[0,0,1,1]);profile.setdefault('points',{})
+            self.q.put(('log',f'已确认游戏画面：逻辑编号={target.logical_id}，物理显示器ID={target.physical_id}，截图={image.width}×{image.height}。'))
             self.q.put(('bound',(client.serial,profile)))
         self.begin('绑定当前游戏',work)
     def calibrate(self,mode):
