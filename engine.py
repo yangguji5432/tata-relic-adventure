@@ -418,7 +418,7 @@ class Runner:
             if kind=='unknown':
                 if unknown_since is None:
                     unknown_since=time.monotonic()
-                    unknown_next_space=unknown_since+5
+                    unknown_next_space=unknown_since+1
             if repeat<2: continue
             if kind=='unknown':
                 if observe:
@@ -428,9 +428,12 @@ class Runner:
                 if now>=unknown_next_space:
                     protected=True;saw_expedition=True
                     if not send_key(hwnd,'space',self.stop): return
-                    unknown_next_space=time.monotonic()+5
-                    self.q.put(('log',f'未知画面已持续 {int(now-unknown_since)} 秒：后台点击继续，5 秒后仍未知再尝试。'))
-                self.q.put(('status',f'未知画面恢复中：{int(now-unknown_since)}/60 秒，每隔 5 秒尝试继续；F9 可停止。'))
+                    finished=time.monotonic()
+                    interval=1 if finished-unknown_since<20 else 5
+                    unknown_next_space=finished+interval
+                    self.q.put(('log',f'未知画面已持续 {int(now-unknown_since)} 秒：后台点击继续，{interval} 秒后仍未知再尝试。'))
+                interval=1 if now-unknown_since<20 else 5
+                self.q.put(('status',f'未知画面恢复中：{int(now-unknown_since)}/60 秒，当前每隔 {interval} 秒尝试继续；F9 可停止。'))
                 continue
             if unknown_since is not None:
                 self.q.put(('log','画面已重新确认，停止未知画面继续重试。'))
