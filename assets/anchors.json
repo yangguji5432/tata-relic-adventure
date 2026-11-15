@@ -1,0 +1,158 @@
+[
+  {
+    "name": "forward",
+    "file": "forward.png",
+    "box": [
+      148,
+      506,
+      190,
+      526
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "retreat",
+    "file": "retreat.png",
+    "box": [
+      64,
+      456,
+      108,
+      482
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "fight",
+    "file": "fight.png",
+    "box": [
+      224,
+      456,
+      268,
+      482
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "continue",
+    "file": "continue.png",
+    "box": [
+      110,
+      545,
+      238,
+      566
+    ],
+    "min_value": 85,
+    "bright": false
+  },
+  {
+    "name": "legend_left",
+    "file": "legend_left.png",
+    "box": [
+      66,
+      414,
+      149,
+      435
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "legend_right",
+    "file": "legend_right.png",
+    "box": [
+      238,
+      414,
+      294,
+      435
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "claim",
+    "file": "claim.png",
+    "box": [
+      130,
+      534,
+      208,
+      560
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "home_title",
+    "file": "home_title.png",
+    "box": [
+      115,
+      8,
+      218,
+      36
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "home_button",
+    "file": "home_button.png",
+    "box": [
+      171,
+      501,
+      246,
+      531
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "catalog",
+    "file": "catalog.png",
+    "box": [
+      20,
+      525,
+      48,
+      548
+    ],
+    "min_value": 165,
+    "bright": false
+  },
+  {
+    "name": "result_title",
+    "file": "result_title.png",
+    "box": [
+      85,
+      22,
+      250,
+      62
+    ],
+    "min_value": 165,
+    "bright": true
+  },
+  {
+    "name": "result_total",
+    "file": "result_total.png",
+    "box": [
+      108,
+      504,
+      163,
+      524
+    ],
+    "min_value": 165,
+    "bright": true
+  },
+  {
+    "name": "result_claim",
+    "file": "result_claim.png",
+    "box": [
+      146,
+      548,
+      191,
+      574
+    ],
+    "min_value": 165,
+    "bright": false
+  }
+]
