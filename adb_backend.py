@@ -12,6 +12,9 @@ DEFAULT_POINTS={
  'home':[.52,.85], 'forward':[.50,.82], 'treasure':[.50,.70],
  'buff':[.50,.92], 'result':[.50,.92], 'retreat':[.26,.77],
  'fight':[.74,.77], 'catalog':[.10,.86], 'unknown':[.50,.88],
+ 'fish_action':[.50,.865],
+ 'hunt_start':[.55,.95], 'hunt_lock':[.93,.84],
+ 'hunt_rage':[.93,.73], 'hunt_exit':[.50,.965],
 }
 
 class AdbError(RuntimeError): pass
@@ -202,7 +205,11 @@ class Session:
 
     def raw_capture(self):
         self.guard(force=True)
+        capture_started=time.perf_counter()
         image=self.client.screenshot(self.stop,physical_id=self.target.physical_id)
+        capture_finished=time.perf_counter()
+        self.frame_time=(capture_started+capture_finished)/2
+        self.frame_uncertainty=(capture_finished-capture_started)/2
         self.guard(force=True)
         saved=self.profile.get('screen_size')
         if saved and list(image.size)!=saved:raise AdbError('安卓截图尺寸变化，请重新连接并校准游戏区域。')
@@ -228,10 +235,13 @@ class Session:
         l,t,r,b=self.box()
         return (min(r-1,max(l,round(l+(r-l)*point[0]))),min(b-1,max(t,round(t+(b-t)*point[1]))))
 
-    def tap(self,name):
+    def tap(self,name,before_input=None):
         self.guard(force=True)
         x,y=self.point(name)
+        if before_input is not None and not before_input():return False
+        if self.stop.is_set():raise AdbError('任务已停止。')
         self.client.run(['shell','input','-d',str(self.target.logical_id),'tap',str(x),str(y)],stop=self.stop)
+        return True
 
     def swipe_catalog(self,down=True):
         self.guard(force=True)
